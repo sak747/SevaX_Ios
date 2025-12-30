@@ -1,0 +1,1006 @@
+import 'dart:async';
+import 'dart:core';
+import 'dart:developer';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:sevaexchange/auth/auth_provider.dart';
+import 'package:sevaexchange/auth/auth_router.dart';
+import 'package:sevaexchange/constants/sevatitles.dart';
+import 'package:sevaexchange/flavor_config.dart';
+import 'package:sevaexchange/globals.dart' as globals;
+import 'package:sevaexchange/l10n/l10n.dart';
+import 'package:sevaexchange/models/user_model.dart';
+import 'package:sevaexchange/new_baseline/models/community_model.dart';
+import 'package:sevaexchange/ui/screens/blocked_members/pages/blocked_members_page.dart';
+import 'package:sevaexchange/ui/screens/transaction_details/view/transaction_details_view.dart';
+import 'package:sevaexchange/ui/screens/user_info/pages/donations_details_view.dart';
+import 'package:sevaexchange/ui/screens/user_info/pages/user_donations.dart';
+import 'package:sevaexchange/utils/animations/fade_route.dart';
+import 'package:sevaexchange/utils/app_config.dart';
+import 'package:sevaexchange/utils/data_managers/blocs/communitylist_bloc.dart';
+import 'package:sevaexchange/utils/data_managers/blocs/user_profile_bloc.dart';
+import 'package:sevaexchange/utils/firestore_manager.dart' as FirestoreManager;
+import 'package:sevaexchange/utils/log_printer/log_printer.dart';
+import 'package:sevaexchange/utils/utils.dart';
+import 'package:sevaexchange/views/profile/help_page.dart';
+import 'package:sevaexchange/views/community/communitycreate.dart';
+import 'package:sevaexchange/views/core.dart';
+import 'package:sevaexchange/views/notifications/notification_alert_view.dart';
+import 'package:sevaexchange/views/profile/language.dart';
+import 'package:sevaexchange/views/profile/widgets/seva_coin_widget.dart';
+import 'package:sevaexchange/views/requests/custom_request_categories_view.dart';
+import 'package:sevaexchange/views/switch_timebank.dart';
+import 'package:sevaexchange/views/timebanks/widgets/loading_indicator.dart';
+import 'package:sevaexchange/widgets/custom_buttons.dart';
+import 'package:sevaexchange/new_baseline/models/timebank_model.dart';
+import 'package:sevaexchange/utils/soft_delete_manager.dart';
+
+import 'edit_profile.dart';
+import 'timezone.dart';
+
+class ProfileView extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ProfilePage(userModel: SevaCore.of(context).loggedInUser);
+  }
+}
+
+class ProfilePage extends StatefulWidget {
+  final UserModel? userModel;
+  const ProfilePage({Key? key, this.userModel}) : super(key: key);
+
+  @override
+  _ProfilePageState createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  UserModel? user;
+  bool isUserLoaded = false;
+  bool isCommunityLoaded = false;
+  int selected = 0;
+  double sevaCoinsValue = 0.0;
+
+  UserProfileBloc? _profileBloc;
+
+  List<CommunityModel> communities = [];
+  double balance = 0;
+  @override
+  void initState() {
+    log("profile page init");
+    _profileBloc = UserProfileBloc();
+    super.initState();
+    _profileBloc!.getAllCommunities(context, widget.userModel);
+    _profileBloc!.communityLoaded.listen((value) {
+      isCommunityLoaded = value;
+      setState(() {});
+    });
+
+    Future.delayed(Duration.zero, () {
+      FirestoreManager.getUserForIdStream(
+        sevaUserId: SevaCore.of(context).loggedInUser.sevaUserID!,
+      ).listen((UserModel userModel) {
+        if (mounted) isUserLoaded = true;
+
+        _profileBloc!.getAllCommunities(context, userModel);
+        this.user = userModel;
+        logger.i("_____>> " + AppConfig.isTestCommunity.toString());
+        balance = AppConfig.isTestCommunity
+            ? user?.sandboxCurrentBalance ?? 0
+            : user?.currentBalance ?? 0;
+      });
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+  }
+
+  @override
+  void dispose() {
+    _profileBloc!.dispose();
+    super.dispose();
+  }
+
+  void navigateToSettings() {
+    if (user != null) {
+      Navigator.push(
+        context,
+        FadeRoute(
+          page: EditProfilePage(
+            userModel: user,
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    log("profile page build");
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: isUserLoaded
+          ? SingleChildScrollView(
+              child: Column(
+                children: <Widget>[
+                  getAppBar(),
+                  SizedBox(height: 20),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      children: <Widget>[
+                        InkWell(
+                          splashColor: Colors.transparent,
+                          onTap: navigateToSettings,
+                          child: Hero(
+                            tag: 'ProfileImage',
+                            child: Container(
+                              padding: EdgeInsets.all(1),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.grey[200],
+                              ),
+                              child: CircleAvatar(
+                                backgroundImage: NetworkImage(
+                                  user?.photoURL ?? defaultUserImageURL,
+                                ),
+                                backgroundColor: Colors.white,
+                                radius: MediaQuery.of(context).size.width / 4.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          user?.fullname ?? "",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            fontFamily: 'Europa',
+                          ),
+                        ),
+                        SizedBox(height: 5),
+                        Text(
+                          user?.email ?? "",
+                          style: TextStyle(fontSize: 14, color: Colors.black),
+                        ),
+                        SizedBox(height: 20),
+                        SevaCoinWidget(
+                          amount: balance,
+                          onTap: () async {
+                            var connResult =
+                                await Connectivity().checkConnectivity();
+                            if (connResult == ConnectivityResult.none) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(S.of(context).check_internet),
+                                  action: SnackBarAction(
+                                    label: S.of(context).dismiss,
+                                    onPressed: () =>
+                                        ScaffoldMessenger.of(context)
+                                            .hideCurrentSnackBar(),
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+
+                            // Check whether user has any transactions. Use the
+                            // existing transactions stream and take the first
+                            // emission to decide. If empty, show a themed
+                            // blocking dialog; otherwise navigate.
+                            try {
+                              final transactions = await FirestoreManager
+                                      .getUsersCreditsDebitsStream(
+                                          userId: user?.sevaUserID ?? '')
+                                  .first;
+
+                              final bool hasTransactions =
+                                  transactions.isNotEmpty;
+
+                              if (!hasTransactions) {
+                                // Show a dialog that follows the current theme
+                                await showDialog<void>(
+                                  context: context,
+                                  barrierDismissible:
+                                      false, // block background interaction
+                                  builder: (BuildContext dialogContext) {
+                                    return AlertDialog(
+                                      backgroundColor: Theme.of(context)
+                                          .dialogBackgroundColor,
+                                      title: Text(S.of(context).seva_credit_s),
+                                      content:
+                                          Text('No transaction activity found'),
+                                      actions: <Widget>[
+                                        TextButton(
+                                          style: TextButton.styleFrom(
+                                            backgroundColor: Theme.of(context)
+                                                .colorScheme
+                                                .secondary,
+                                          ),
+                                          child: Text(
+                                            S.of(context).dismiss,
+                                            style:
+                                                TextStyle(color: Colors.white),
+                                          ),
+                                          onPressed: () {
+                                            Navigator.of(dialogContext).pop();
+                                          },
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                );
+                                return;
+                              }
+
+                              // Has transactions — proceed to TransactionDetailsView
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) {
+                                    return TransactionDetailsView(
+                                      id: user?.sevaUserID ?? '',
+                                      userId: user?.sevaUserID ?? '',
+                                      userEmail: user?.email ?? '',
+                                      totalBalance: balance.toStringAsFixed(2),
+                                    );
+                                  },
+                                ),
+                              );
+                            } catch (e) {
+                              // On error, log and allow user to attempt navigation
+                              logger.e('Error fetching transactions: $e');
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) {
+                                    return TransactionDetailsView(
+                                      id: user?.sevaUserID ?? '',
+                                      userId: user?.sevaUserID ?? '',
+                                      userEmail: user?.email ?? '',
+                                      totalBalance: balance.toStringAsFixed(2),
+                                    );
+                                  },
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                        SizedBox(
+                          height: 20,
+                        ),
+                        // Container(
+                        //     height:50,
+                        //     padding: EdgeInsets.fromLTRB(5, 5, 0, 5),
+                        //     child: CustomElevatedButton(
+                        //         shape:StadiumBorder(),
+                        //         onPressed: () async {
+                        //             Navigator.of(context).push(
+                        //                 MaterialPageRoute(
+                        //                     builder: (context) => AddManualTimeWidget(
+                        //                         userModel: SevaCore.of(context).loggedInUser,
+                        //                     ),
+                        //                 ),
+                        //             );
+                        //         },
+                        //         color: Theme.of(context).primaryColor,
+                        //         child: Text("Add Manual time", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),),
+
+                        //     )
+                        // ),
+                        SizedBox(
+                          height: 20,
+                        ),
+                        GoodsAndAmountDonations(
+                          isGoods: false,
+                          isTimeBank: false,
+                          userId: user?.sevaUserID ?? '',
+                          timebankId: user?.currentTimebank ?? '',
+                          onTap: () async {
+                            // Fetch the current timebank model before navigating
+                            final currentTimebankId =
+                                user?.currentTimebank ?? '';
+                            if (currentTimebankId.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content:
+                                      Text('Please select a timebank first'),
+                                ),
+                              );
+                              return;
+                            }
+
+                            try {
+                              // Check if user has any donations
+                              final donations =
+                                  await FirestoreManager.getDonationList(
+                                isGoods: false,
+                                timebankId: currentTimebankId,
+                                userId: user?.sevaUserID ?? '',
+                              ).first;
+
+                              final bool hasDonations = donations.isNotEmpty;
+
+                              if (!hasDonations) {
+                                // Show the same dialog as Seva credit page
+                                await showDialog<void>(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (BuildContext dialogContext) {
+                                    return AlertDialog(
+                                      backgroundColor: Theme.of(context)
+                                          .dialogBackgroundColor,
+                                      title: Text('Donations'),
+                                      content:
+                                          Text('No transaction activity found'),
+                                      actions: <Widget>[
+                                        TextButton(
+                                          style: TextButton.styleFrom(
+                                            backgroundColor: Theme.of(context)
+                                                .colorScheme
+                                                .secondary,
+                                          ),
+                                          child: Text(
+                                            S.of(context).dismiss,
+                                            style:
+                                                TextStyle(color: Colors.white),
+                                          ),
+                                          onPressed: () {
+                                            Navigator.of(dialogContext).pop();
+                                          },
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                );
+                                return;
+                              }
+
+                              final timebankModel =
+                                  await FirestoreManager.getTimeBankForId(
+                                      timebankId: currentTimebankId);
+
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => DonationsDetailsView(
+                                    id: user?.sevaUserID ?? '',
+                                    totalBalance: '',
+                                    timebankModel: timebankModel,
+                                    fromTimebank: false,
+                                    isGoods: false,
+                                  ),
+                                ),
+                              );
+                            } catch (e) {
+                              logger.e('Error fetching donations: $e');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error loading data'),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                        SizedBox(height: 15),
+                        GoodsAndAmountDonations(
+                          isGoods: true,
+                          isTimeBank: false,
+                          userId: user?.sevaUserID ?? '',
+                          timebankId: user?.currentTimebank ?? '',
+                          onTap: () async {
+                            // Fetch the current timebank model before navigating
+                            final currentTimebankId =
+                                user?.currentTimebank ?? '';
+                            if (currentTimebankId.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content:
+                                      Text('Please select a timebank first'),
+                                ),
+                              );
+                              return;
+                            }
+
+                            try {
+                              // Check if user has any donations
+                              final donations =
+                                  await FirestoreManager.getDonationList(
+                                isGoods: true,
+                                timebankId: currentTimebankId,
+                                userId: user?.sevaUserID ?? '',
+                              ).first;
+
+                              final bool hasDonations = donations.isNotEmpty;
+
+                              if (!hasDonations) {
+                                // Show the same dialog as Seva credit page
+                                await showDialog<void>(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (BuildContext dialogContext) {
+                                    return AlertDialog(
+                                      backgroundColor: Theme.of(context)
+                                          .dialogBackgroundColor,
+                                      title: Text('Donations'),
+                                      content:
+                                          Text('No transaction activity found'),
+                                      actions: <Widget>[
+                                        TextButton(
+                                          style: TextButton.styleFrom(
+                                            backgroundColor: Theme.of(context)
+                                                .colorScheme
+                                                .secondary,
+                                          ),
+                                          child: Text(
+                                            S.of(context).dismiss,
+                                            style:
+                                                TextStyle(color: Colors.white),
+                                          ),
+                                          onPressed: () {
+                                            Navigator.of(dialogContext).pop();
+                                          },
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                );
+                                return;
+                              }
+
+                              final timebankModel =
+                                  await FirestoreManager.getTimeBankForId(
+                                      timebankId: currentTimebankId);
+
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => DonationsDetailsView(
+                                    id: user?.sevaUserID ?? '',
+                                    totalBalance: '',
+                                    timebankModel: timebankModel,
+                                    fromTimebank: false,
+                                    isGoods: true,
+                                  ),
+                                ),
+                              );
+                            } catch (e) {
+                              logger.e('Error fetching donations: $e');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error loading data'),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 20),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      children: <Widget>[
+                        Divider(
+                          thickness: 0.5,
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: <Widget>[
+                            Padding(
+                              padding: EdgeInsets.only(left: 10),
+                              child: Text(
+                                S.of(context).select_timebank,
+                                style: TextStyle(fontSize: 18),
+                              ),
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.add_circle_outline),
+                              onPressed: () async {
+                                globals.isFromOnBoarding = false;
+
+                                var timebankAdvisory =
+                                    S.of(context).create_timebank_confirmation;
+                                final onActivityResult =
+                                    await showTimebankAdvisory(
+                                        dialogTitle: timebankAdvisory);
+
+                                // Check the result map for the PROCEED flag
+                                if (onActivityResult['PROCEED'] == true) {
+                                  createEditCommunityBloc.updateUserDetails(
+                                      SevaCore.of(context).loggedInUser);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context1) => SevaCore(
+                                        loggedInUser:
+                                            SevaCore.of(context).loggedInUser,
+                                        child: CreateEditCommunityView(
+                                          isCreateTimebank: true,
+                                          timebankId:
+                                              FlavorConfig.values.timebankId,
+                                          isFromFind: false,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                        Card(
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: StreamBuilder<List<CommunityModel>>(
+                            stream: _profileBloc!.communities,
+                            builder: (context, snapshot) {
+                              if (snapshot.data != null)
+                                return Column(
+                                  children: snapshot.data!
+                                      .map(
+                                        (model) => CommunityCard(
+                                          selected: user?.currentCommunity ==
+                                              model.id,
+                                          community: model,
+                                          currentUser: user,
+                                          onTap: () {
+                                            _profileBloc!.setDefaultCommunity(
+                                                user?.email ?? '',
+                                                model,
+                                                context);
+                                            Navigator.pushReplacement(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (context) =>
+                                                    SwitchTimebank(content: ''),
+                                              ),
+                                            );
+                                          },
+                                          onDelete: () {
+                                            _showDeleteCommunityDialog(
+                                                context, model);
+                                          },
+                                        ),
+                                      )
+                                      .toList(),
+                                );
+
+                              if (snapshot.hasError)
+                                return Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        12.0, 12.0, 12.0, 0),
+                                    child: Text(snapshot.error.toString()),
+                                  ),
+                                );
+                              return Container(
+                                height: 100,
+                                child: LoadingIndicator(),
+                              );
+                            },
+                          ),
+                        ),
+                        SizedBox(height: 10),
+                        ProfileSettingsCard(
+                          title: S.of(context).help,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) {
+                                  return HelpPage();
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        ProfileSettingsCard(
+                          title: S.of(context).notification_alerts,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => NotificationAlert(
+                                  SevaCore.of(context)
+                                          .loggedInUser
+                                          .sevaUserID ??
+                                      '',
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        ProfileSettingsCard(
+                          title: S.of(context).blocked_members,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => BlockedMembersPage(
+                                  timebankId: SevaCore.of(context)
+                                          .loggedInUser
+                                          .currentTimebank ??
+                                      '',
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        ProfileSettingsCard(
+                          title: S.of(context).my_request_categories,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) {
+                                  return CustomRequestCategories();
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        SizedBox(width: 20),
+                        ProfileSettingsCard(
+                          title: S.of(context).my_timezone,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) {
+                                  return TimezoneView();
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        ProfileSettingsCard(
+                          title: S.of(context).my_language,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) {
+                                  return LanguageView();
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 10),
+                ],
+              ),
+            )
+          : Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  LoadingIndicator(),
+                  SizedBox(height: 5),
+                  Text(S.of(context).loading + '...'),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Future<Map<dynamic, dynamic>> showTimebankAdvisory(
+      {String? dialogTitle}) async {
+    final result = await showDialog<Map<dynamic, dynamic>>(
+        context: context,
+        builder: (BuildContext viewContext) {
+          return AlertDialog(
+//            title: Text(
+//              dialogTitle,
+//              style: TextStyle(
+//                fontSize: 16,
+//              ),
+//            ),
+
+            actionsPadding: EdgeInsets.only(right: 20),
+            content: Form(
+              child: Container(
+                height: 200,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: Text(
+                    dialogTitle ?? '',
+                    textAlign: TextAlign.justify,
+                    style: TextStyle(
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              CustomTextButton(
+                shape: StadiumBorder(),
+                color: HexColor("#d2d2d2"),
+                child: Text(
+                  S.of(context).cancel,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontFamily: 'Europa',
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.of(viewContext).pop({'PROCEED': false});
+                },
+              ),
+              CustomTextButton(
+                shape: StadiumBorder(),
+                color: Theme.of(context).colorScheme.secondary,
+                child: Text(
+                  S.of(context).proceed,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontFamily: 'Europa',
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.of(viewContext).pop({'PROCEED': true});
+                },
+              ),
+            ],
+          );
+        });
+    return result ?? {'PROCEED': false};
+  }
+
+  AppBar getAppBar() {
+    return AppBar(
+      elevation: 0,
+      automaticallyImplyLeading: false,
+      backgroundColor: Colors.white,
+      actions: <Widget>[
+        IconButton(
+          color: Colors.black,
+          icon: Icon(Icons.edit),
+          onPressed: navigateToSettings,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _signOut(BuildContext context) async {
+    Navigator.pop(context);
+    var auth = AuthProvider.of(context).auth;
+    await auth.signOut();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (BuildContext context) => AuthRouter(),
+      ),
+    );
+  }
+
+  bool _canUserDeleteCommunity(
+      CommunityModel community, UserModel? currentUser) {
+    if (currentUser?.sevaUserID == null) return false;
+
+    // Check if user is the creator of the community
+    if (community.created_by == currentUser!.sevaUserID) return true;
+
+    // Check if user is in the organizers list
+    if (community.organizers != null &&
+        community.organizers!.contains(currentUser!.sevaUserID)) return true;
+
+    return false;
+  }
+
+  void _showDeleteCommunityDialog(
+      BuildContext context, CommunityModel community) {
+    if (!_canUserDeleteCommunity(community, user)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('You do not have permission to delete this community'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Delete Community'),
+          content: Text('Are you sure you want to delete "${community.name}"? '
+              'This action cannot be undone and will remove all associated data.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _deleteCommunity(community);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: Text('Delete', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteCommunity(CommunityModel community) async {
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Deleting community...'),
+              ],
+            ),
+          );
+        },
+      );
+
+      // Use the soft delete system for community deletion
+      await showAdvisoryBeforeDeletion(
+        context: context,
+        softDeleteType: SoftDelete.REQUEST_DELETE_COMMUNITY,
+        associatedId: community.id,
+        email: user?.email ?? '',
+        associatedContentTitle: community.name,
+        isAccedentalDeleteEnabled: true,
+      );
+
+      // Refresh the communities list
+      _profileBloc!.getAllCommunities(context, user);
+    } catch (e) {
+      // Hide loading indicator
+      Navigator.of(context).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete community: ${e.toString()}'),
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+}
+
+class ProfileSettingsCard extends StatelessWidget {
+  final String? title;
+  final VoidCallback? onTap;
+
+  const ProfileSettingsCard({
+    Key? key,
+    this.title,
+    this.onTap,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Card(
+        elevation: 2,
+        child: Container(
+          height: 60,
+          child: Row(
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.only(left: 15),
+                child: Text(
+                  title!,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Spacer(),
+              Icon(Icons.navigate_next),
+              SizedBox(width: 10),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CommunityCard extends StatelessWidget {
+  const CommunityCard({
+    Key? key,
+    this.selected,
+    this.onTap,
+    this.onDelete,
+    required this.community,
+    this.currentUser,
+  }) : super(key: key);
+
+  final CommunityModel community;
+  final bool? selected;
+  final VoidCallback? onTap;
+  final VoidCallback? onDelete;
+  final UserModel? currentUser;
+
+  bool _canUserDeleteCommunity() {
+    if (currentUser?.sevaUserID == null) return false;
+
+    // Check if user is the creator of the community
+    if (community.created_by == currentUser!.sevaUserID) return true;
+
+    // Check if user is in the organizers list
+    if (community.organizers != null &&
+        community.organizers!.contains(currentUser!.sevaUserID)) return true;
+
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 1,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          SizedBox(width: 15),
+          selected!
+              ? Icon(Icons.check, color: Colors.green)
+              : SizedBox(
+                  width: 24,
+                ),
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: 15,
+              vertical: 10,
+            ),
+            child: Container(
+              height: 40,
+              width: 40,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                image: DecorationImage(
+                  image:
+                      NetworkImage(community.logo_url ?? defaultUserImageURL),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: onTap!,
+              child: Text(
+                community.name,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+          ),
+          // Add delete button for authorized users
+          if (_canUserDeleteCommunity() && onDelete != null)
+            IconButton(
+              icon: Icon(Icons.delete, color: Colors.red),
+              onPressed: onDelete,
+              tooltip: 'Delete Community',
+            ),
+          SizedBox(width: 10),
+        ],
+      ),
+    );
+  }
+}

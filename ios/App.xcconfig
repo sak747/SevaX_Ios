@@ -1,0 +1,16 @@
+//
+//  App.xcconfig
+//  Runner
+//
+//  Created by uipep on 6/9/20.
+//
+
+// Configuration settings file format documentation can be found at:
+// https://help.apple.com/xcode/#/dev745c5c974
+
+#include "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+#include "Generated.xcconfig"
+
+FLUTTER_TARGET=lib/main_app.dart
+bundle_identifier = com.sevaexchange.app
+app_name = Seva Exchange
